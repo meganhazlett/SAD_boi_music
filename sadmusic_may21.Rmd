@@ -1,0 +1,447 @@
+---
+title: "SAD Music"
+author: "Megan Hazlett"
+date: "April 2020"
+output:
+  word_document: default
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+#knitr::opts_chunk$set(echo = FALSE,comment="  ")
+knitr::opts_chunk$set(echo = FALSE,comment="  ")
+```
+
+```{r libraries_and_data, include=FALSE}
+library('dplyr')
+library('Kendall')
+library('lubridate')
+library('ggplot2')
+library('trend')
+library('randomForest')
+
+hot <- read.csv('/Users/meganhazlett/version-control/SAD_boi_music/Hot_Stuff.csv', stringsAsFactors = F)
+colnames(hot)[colnames(hot)=='Performer'] <- 'artist_name'
+artist_info <- read.csv('/Users/meganhazlett/version-control/SAD_boi_music/artist_info.csv', stringsAsFactors = F)
+artist_term <- read.csv('/Users/meganhazlett/version-control/SAD_boi_music/artist_term.csv', stringsAsFactors = F)
+artist_genre <- merge(x=artist_term,y=artist_info,by='artist_id',all.x=TRUE)
+```
+
+## Introduction
+While my move to Chicago was filled with excitement, it was also met with some caution. As a native Floridian, I was warned of the intense winters, and feared not only being frozen by the cold, but also enduring excessive hours of darkness. According to Psychology Today, an estimated 10 million people suffer from seasonal affective disorder (SAD) every year. Defined as depression that surfaces during the same season each year, SAD is seen in most during the winter months. SAD affects various aspects of life, including appetite, social inclinations, and sleep patterns. As someone unfamiliar with seasonal swings, this got me thinking about how they could affect other aspects of my life beyond what is usually reported by health professionals. 
+
+Particularly, it got me wondering how SAD could influence something very close to my heart: music. I began to think about how my music listening habits may be altered by SAD and other seasonal trends. Would I need more variety in my music to cope during the winter months? Would I listen to more angsty music during January and February than I would normally listen to in the summer? While I continue to monitor my own behaviors, I thought it could be interesting to see if I could detect certain seasonal music listening habits on a population level.
+
+For this project, I decided to focus on two particular questions regarding seasonal effects and music listening habits:     
+(1) Does the quantity of unique songs we listen to differ by season (i.e. do we need more variety in our music depending on the season)?     
+(2) Do the seasons effect what genre of music we listen to?  
+
+### Initial Research
+While there is limited existing research about the relationship between consumption of music and the seasons, there is plenty of evidence about which times of the year are the most hectic for music events. Most of top 20 music festivals, such as Coachella and Lallapaloosa, are scheduled for Spring or Summer, and none of the top 20 are scheduled Winter. According to [MusicConsultant.com](https://musicconsultant.com/music-career/when-is-the-best-time-of-year-to-release-an-album-or-ep/#.XoYPndNKiL8), the best time for artists to release new music is between January and February, and between April and October, suggesting that songs released in Winter will not do well because of holiday chaos, and songs released in March will be overshadowed by the famous South by Southwest festival. 
+
+As far a research about the relationship between the seasons and music genre, [a study](https://www.psychologytoday.com/us/blog/head-games/201711/when-seasons-change-so-do-musical-preferences-says-science) conducted by psychologist Terry Pettijohn and collaborators caught my eye. According to their research, there does seem to be some relationship between genre preference and season. Pettijohn built his research on a previous study about daylight savings time, which found that with any environmental threat, such as a change in routine caused by waking up an hour earlier, people prefer to consume more meaningful content, i.e. slower, longer, more comforting and romantic music. Basically, music in trying times are used as coping mechanisms. In his study, Pettijohn primed United States college students in the Northeast and Southeast to report their music preferences in the different seasons. Based on what the students reported, he noticed that all students seem to prefer more relaxed music, such as jazz, folk, and classical, in the fall and winter, but more uplifting music, such as electronic and hip hop, in the summer. I thought this study was very interesting, however, was cautious about the results because of the self-reported nature of the study.
+
+### Hypotheses 
+Based on this initial research, I developed two hypotheses to test my questions.    
+* First, I expect there to be a greater quantity of unique songs consumed in the Spring and Summer. This is due to not only to festival lineup in these months, but also the recommendation by MusicConsultant.com to avoid releasing music in the winter.   
+* Second, I expect that there will be a seasonal effect on genre. Particularly, I believe I will see a preference for pop in the Summer and Spring months, and a preference in rock, soul, and angst (emo, punk, grunge) in the Fall and Winter. I believe this, based not only because of the seasonal study by Pettijohn, but also because of the previous research about using music as a coping mechanism.
+
+### Data Sets 
+For this study, I used the following data sets. 
+
+The first is [Billboard Hot 100](https://data.world/kcmillersean/billboard-hot-100-1958-2017), which reports the top 100 hits for every week from August 2, 1958 to June 22, 2019 in the United States. The original data set consists of 317,795 entries with 10 columns of information. The columns provide information on the WeekID (assigned by Billboard), the current rank (1-100) of a particular song during that week, the song name, artist name, songID (a unique indicator of the song consisting of the song and artist name), how many times the song was charted, the song's rank in the previous week, the peak rank of the song, and how many weeks the song stayed in the top 100. For the purpose of this study, I only used the three columns: WeekID, SongID, and current rank. 
+
+The second data set is [Million Song](http://millionsongdataset.com/), which is contains genre information about artists. The original data set contains a million rows of information about a given song, including information about the song genre, song duration, tempo, time signature, number of beats, energy and much more. While there were originally 46 columns of information, I was only interested in finding a song's genre, or genres, since this information was not provided by the Billboard Hot 100 dataset. I wanted to be able to add genre information to detect genre popularity within seasons.
+
+
+## Part I: Determining Relationship Between Quantity of Music Variety (Number of Unique Songs) and the Seasons 
+To determine if there is a relationship between the seasons and music variety, I used only Billboard Hot 100 data set. This data set was aggregated to show the unique number of hits per month (the number of charted songs per month), which I used to represent the variety of songs consumed by the public each month.
+
+```{r hot_subset}
+sub1 <- subset(hot, select=c("WeekID", "SongID", "Weeks.on.Chart"))
+#Make dates R friendly
+sub1$WeekID <- as.Date(sub1$WeekID, "%m/%d/%Y")
+#Add a column with the total number of weeks on chart
+sub1$Total_Weeks <- ave(sub1$Weeks.on.Chart, sub1$SongID, FUN=max)
+#Add a month year column
+sub1 <- sub1 %>% mutate(monthyr = paste(month(sub1$WeekID), year(sub1$WeekID), sep = " "))
+#Count the number of songs charted per month 
+#Month year id column 
+sub1 <- sub1 %>% mutate(myid = paste(month(sub1$WeekID), year(sub1$WeekID), sub1$SongID))
+sub1 <- sub1 %>% mutate(month = month(sub1$WeekID))
+sub1 <- sub1 %>% mutate(year = year(sub1$WeekID))
+sub1$myid <- as.character(sub1$myid)
+sub2 <- subset(sub1, !duplicated(myid))
+monthlyhits <- as.data.frame(table(sub2$year, sub2$month))
+monthlyhits2 <- monthlyhits[order(monthlyhits$Var1),]
+monthlyhits3 <- (monthlyhits2 %>% filter(monthlyhits2$Freq != 0)) #Get rid of Jan-July 1958 because no data
+colnames(monthlyhits3) <- c("Year", "Month", "Freq")
+
+#Time series version of data
+monthlyhits_ts <- ts(monthlyhits3$Freq, frequency = 12, start=c(1958, 8))
+```
+From this aggregated data set, I created four plots to graphically assess the number of hits per month by looking at the elements of time series decomposition (Figure 1). The first plot in Figure 1 draws the number of hits over time. We see from this graph that there is certainly a trend over time, with a dip in the number of hits per month in the late 1990s. We also notice from this plot lots of variation in the number of hits, which could indicate the presence of a seasonal trend. 
+I dove deeper with the seasonal trend plot, which showed a consistent wiggle, indicating the possibility of seasonality. 
+The third plot shows the cyclical trend of the number of hits per month. Based on the plot, there does not seem to be a large cyclical presence in the data, except for a dip and rise in the late 1990s. 
+Finally, the last plot in Figure 1 explored the random aspect of the data. We see from the plot that randomness could play a great deal in the temporal relationships of the data. 
+Based on the second plot, I decided to further explore the seasonal effect on number of hits of per month.
+```{r plot2}
+#Plot 2- Seasonal decomposition
+bymonthly <- stl(monthlyhits_ts, s.window="periodic")
+plot(bymonthly, main="Figure 1: Time Series Decomposition of Nummber of Hits Per Month")
+```
+
+I used a bar graph (Figure 2) to compare the average number of hits per month. The bars seem to be at an even height, indicating that the average number of hits per month may not differ by month. \newline
+
+```{r plot3}
+#Plot 3- Counts of hits by month
+avgmonthhits <- (monthlyhits3 %>% group_by(Month) %>% summarise(avghits = mean(Freq)))
+colnames(avgmonthhits) <- c("Month", "AvgHits")
+p3 <- ggplot(avgmonthhits, aes(x = factor(Month), y = AvgHits)) +
+    geom_bar(stat = "identity", fill="#6A5ACD") +
+    xlab("Month") + ylab("Average Hits") + 
+    ggtitle("Figure 2: Average Number of Hits Per Month (1958-2019)") +
+  theme(plot.title = element_text(hjust = 0.5))
+print(p3)
+```
+
+Finally, in Figure 3, we look at the average number of hits per month by season (Winter = [December, January, February], Spring = [March, April May], Summer = [June, July, August], Fall = [September, October, November]). From Figure 3, the number of hits does not seem to vary with the seasons because the bars are approximately the same height.
+
+```{r plot4}
+#Add a season column
+avgseasonalhits <- monthlyhits3
+avgseasonalhits$Season <- NULL 
+for(i in 1:nrow(avgseasonalhits)){
+  if(avgseasonalhits[i,"Month"] %in% c(12,1,2)){
+    avgseasonalhits[i,"Season"] <- "winter"
+  }else if(avgseasonalhits[i,"Month"] %in% c(3,4,5)){
+    avgseasonalhits[i,"Season"] <- "spring"
+  }else if(avgseasonalhits[i,"Month"] %in% c(6,7,8)){
+    avgseasonalhits[i,"Season"] <- "summer"
+  }else if(avgseasonalhits[i,"Month"] %in% c(9,10,11)){
+    avgseasonalhits[i,"Season"] <- "fall"
+  }
+}
+
+#Group by season and find the average
+sznhit <- (avgseasonalhits %>% group_by(Season) %>% summarise(avghits = mean(Freq)))
+colnames(sznhit) <- c("Season", "AvgHits")
+
+p4 <- ggplot(sznhit, aes(x = factor(Season), y = AvgHits)) +
+  geom_bar(stat = "identity", fill="#1ABC9C") +
+  xlab("Season") + ylab("Average Hits") + 
+  ggtitle("Figure 3: Average Number of Hits Per Season (1958-2019)") + 
+  theme(plot.title = element_text(hjust = 0.5))
+print(p4)
+```
+
+To address the conflicting theories from the time series decomposition and bar graphs, I employed Poisson regression to analytically assess the presence (or lack of presence) of a seasonal effect on number of hits per month. My inspiration to use this method came from a [student project](https://stats.stackexchange.com/questions/144745/is-this-an-appropriate-method-to-test-for-seasonal-effects-in-suicide-count-data) about determining if there is a seasonal effect in number of suicides.
+
+I used the Poisson model   
+$\mu$ = t*exp($\beta_{1}$ $X_{1}$+$\beta_{2}$ $X_{2}$+...+$\beta_{n}$ $X_{n}$)   
+where $\mu$ is the Poisson incident rate and where   
+Pr(Y=y|$\mu$) = $\frac{e^{-\mu}\mu^y}{y!}$.
+```{r poisson_cleaning}
+#Poisson Regression 
+monthlyhits4 <- monthlyhits3
+#Add an event id starting with 0 
+monthlyhits4$t <- seq(0, length = nrow(monthlyhits4))
+#Add the number of days per month
+monthlyhits4$monthdays <- rep(c(31,30,31,30,31,31,28,31,30,31,30,31), length=nrow(monthlyhits4))
+monthlyhits4$season <- NULL
+for(i in 1:nrow(monthlyhits4)){
+  if(monthlyhits4[i,"Month"] %in% c(12,1,2)){
+    monthlyhits4[i,"season"] <- "winter"
+  }else if(monthlyhits4[i,"Month"] %in% c(3,4,5)){
+    monthlyhits4[i,"season"] <- "spring"
+  }else if(monthlyhits4[i,"Month"] %in% c(6,7,8)){
+    monthlyhits4[i,"season"] <- "summer"
+  }else if(monthlyhits4[i,"Month"] %in% c(9,10,11)){
+    monthlyhits4[i,"season"] <- "fall"
+  }
+}
+colnames(monthlyhits4) <-c("year", "month", "count", "t", "monthdays", "season")
+#Change the columns year and month to numeric
+monthlyhits4$year <- as.numeric(as.character(monthlyhits4$year))
+monthlyhits4$month <- as.numeric(as.character(monthlyhits4$month))
+#Change season to factor 
+monthlyhits4$season <- as.factor(monthlyhits4$season)
+#Account for leap years
+monthlyhits4$monthdays[ !(monthlyhits4$year %% 4) & monthlyhits4$month == 2] <- 29
+```
+To represent seasonality as a predictor, I used the following two models:      
+(1) Using properties of sine and cosine to emulate seasonality     
+NumHits = time * exp(time$X_{1}$+days_per_month$X_{2}$ + cos$(\frac{t\pi}{12})$$X_{3}$ +sin$(\frac{t\pi}{12})$$X_{3}$   
+(2) Using the season itself as a factor   
+NumHits = time * exp(time$X_{1}$+days_per_month$X_{2}$ + spring$X_{3}$ + summer$X_{4}$ + winter$X_{4}$)   
+
+Running the first model, we see that while the chi-squared test of overall significance indicates that the model is statistically different than the null model, time itself is the only significant predictor of number of hits. Thus, the sine and cosine variables used to represent season are not significant predictors, and season is not a driving force is predicting the number of hits per month. 
+```{r szn1}
+#Model 1 : seasonal affect version 1 
+a2 <- glm( count ~ t + monthdays + cos(2*pi*t/12) + sin(2*pi*t/12), family="poisson", data = monthlyhits4 )
+print(summary(a2))
+#Overall significance test
+a2_o_signif <- (633.39-498.04)
+a2_df <- (730-726)
+print(paste0("P-value of Chi-Squared Test for Method 1 = ", pchisq(a2_o_signif, df=a2_df, lower.tail = F) )) 
+#only t is significant
+```
+
+I verified this conclusion with model 2, which revealed that none of the seasons are significant predictors of number of hits.
+
+```{r szn2}
+#Model 2 : seasonal affect version 2
+#Add a season variable : 1 winter, 2 spring, 3 summer, 4 fall
+a3 <- glm(count ~ t + monthdays + season, family="poisson", data=monthlyhits4)
+print(summary(a3))
+#Overall significance test
+a3_o_signif <- (633.39-496.35)
+a3_df <- (730-725)
+print(paste0("P-value of Chi-Squared Test for Method 2 = ", pchisq(a3_o_signif, df=a3_df, lower.tail = F) )) #highly significant 
+#Significance of coefficients
+#Only t is significant 
+```
+
+To finalize the results, I compared the Poisson model 2 with a random forest model of the same structure. I used 500 trees, which I verified was appropriate in Figure 4, and sample 3 variables for each split. From Figure 5 we see that season does not appear to be an important variable in predicting number of hits. Finally, from the partial dependence plots in Figures 6.1, 6.2, and 6.3, it is confirmed that season is not influential in predicting the number of hits. These conclusions align with what was found with the Poisson models.
+
+```{r random_forest1}
+#Random Forest 
+Random_Forest1 <- randomForest(count ~ t + monthdays + season, data=monthlyhits4, mtry=3, ntree = 500, nodesize = 3, importance = TRUE)
+plot(Random_Forest1, main="Figure 4: Number of Trees", sub="Ideal number of trees is around 100")
+
+print(" ")
+
+#Variable importance 
+#importance(Random_Forest1, main="Figure 5.1"); 
+varImpPlot(Random_Forest1, main="Figure 5")
+
+#Partial dependence plots 
+partialPlot(Random_Forest1, pred.data= monthlyhits4, x.var = t, main="Figure 6.1")
+print(" ")
+partialPlot(Random_Forest1, pred.data= monthlyhits4, x.var = monthdays, main= "Figure 6.2")
+print(" ")
+partialPlot(Random_Forest1, pred.data= monthlyhits4, x.var = season, main="Figure 6.3")
+```
+
+In conclusion, based on the Billboard Hot 100 data, we see from both graphs and the results of the models, that there does not seem to be a seasonal effect driving the number of hits, and thus unique songs consumed, per month. While this does not support my hypothesis, I take these results with caution. The Billboard Hot 100 data set has a bias to only represent people who listen to popular music. In addition, my initial assumption that number of unique hits per month can represent number of unique songs listened to on a popluation level, may not actually capture this variable.
+
+## Part II 
+To tackle the question of whether or not seasonality affects the genre of music we listen to, I merged the Million Song data set with the Billboard data set to get information about song genre. For the sake of this study I only used Billboard Hot 100 songs with a genre mapped from Million Song (35% of the Billboard set do not have a genre). Note that many songs have more than one genre listed and thus those songs are duplicated on the list for every genre listed.
+```{r data_phaseII}
+#Rid the duplicates
+artist_genre <- unique(artist_genre)
+#Keep only charted artists 
+top_artists <- unique(hot$artist_name)
+artist_genre <- filter(artist_genre, artist_name %in% top_artists)
+#Drop artist id 
+artist_genre <- select(artist_genre, -c(artist_id))
+
+#Hot
+sub3 <- subset(hot, select=c("WeekID", "SongID", "artist_name"))
+sub3$WeekID <- as.Date(sub3$WeekID, "%m/%d/%Y")
+#Add a month year column
+sub3 <- sub3 %>% mutate(monthyr = paste(month(sub3$WeekID), year(sub3$WeekID), sep = " "))
+#Month year id column 
+sub3 <- sub3 %>% mutate(myid = paste(month(sub3$WeekID), year(sub3$WeekID), sub3$SongID))
+sub3 <- sub3 %>% mutate(month = month(sub3$WeekID))
+sub3 <- sub3 %>% mutate(year = year(sub3$WeekID))
+sub3$myid <- as.character(sub3$myid)
+#Remove duplicates 
+sub3 <- subset(sub3, !duplicated(myid))
+#add Season
+sub3$season <- NULL 
+for(i in 1:nrow(sub3)){
+  if(sub3[i,"month"] %in% c(12,1,2)){
+    sub3[i,"season"] <- "winter"
+  }else if(sub3[i,"month"] %in% c(3,4,5)){
+    sub3[i,"season"] <- "spring"
+  }else if(sub3[i,"month"] %in% c(6,7,8)){
+    sub3[i,"season"] <- "summer"
+  }else if(sub3[i,"month"] %in% c(9,10,11)){
+    sub3[i,"season"] <- "fall"
+  }
+}
+
+#merge datasets
+hot_genre <- merge(x=sub3, y=artist_genre, by='artist_name', all=TRUE)
+
+#How many songs do not have a genre listed? 
+unique_songs <- distinct(hot_genre, SongID, .keep_all = TRUE)
+unique_songs <- data.frame(unique_songs)
+#Percent of songs without a genre 
+#colMeans(is.na(unique_songs)) #35%
+
+#For the sake of this study, we will use only songs that have a genre -- remove NA songs
+hot_genre <- na.omit(hot_genre) 
+
+```
+First, for some initial exploratory data analysis, I determined the top genres in the merged data set (Figure 7). As expected: pop, rock, and soul top the charts. 
+
+```{r TopGenres}
+top_genres = hot_genre %>% group_by(term) %>% summarise(n= n()) %>% arrange(desc(n))
+top_genres <- data.frame(head(top_genres, 10))
+p5 <- ggplot(top_genres, aes(x = reorder(term, -n), y = n)) +
+  geom_bar(stat = "identity", fill="#1ABC9C") +
+  xlab("Genre") + ylab("Frequency") + 
+  ggtitle("Figure 7: Top Genres") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+print(p5)
+```
+
+Next, I wondered if the popularity of the top three genres are affected by season. In Figures 8, 9, and 10, we look at the number of hits per season from 1958-2019, for pop, rock, and soul individually. 
+
+```{r popular_trends}
+#Find seasonal counts by year
+pop <- hot_genre %>% filter(term=="pop") %>% mutate(yr_szn = paste(season, year)) %>% group_by(yr_szn) %>% summarise(n = n())
+rock <-hot_genre %>% filter(term=="rock") %>% mutate(yr_szn = paste(season, year)) %>% group_by(yr_szn) %>% summarise(n = n())
+soul <- hot_genre %>% filter(term=="soul") %>% mutate(yr_szn = paste(season, year)) %>% group_by(yr_szn) %>% summarise(n = n())
+
+#plot
+pop_plt <- ggplot(pop, aes(x = yr_szn, y = n)) +
+  geom_bar(stat = "identity", fill='pink') +
+  xlab("Time in Seasons (1958-2019)") + ylab("Number of Pop Hits") + 
+  ggtitle("Figure 8: Trends in Pop Since 1958") +
+  theme(axis.text.x = element_blank(), axis.ticks = element_blank(), plot.title = element_text(hjust = 0.5))
+print(pop_plt) #no seasonal trend
+
+rock_plt <- ggplot(rock, aes(x = yr_szn, y = n)) +
+  geom_bar(stat = "identity", fill="deepskyblue4") +
+  xlab("Time in Seasons (1958-2019)") + ylab("Number of Rock Hits") + 
+  ggtitle("Figure 9: Trends in Rock Since 1958") +
+  theme(axis.text.x = element_blank(), axis.ticks = element_blank(), plot.title = element_text(hjust = 0.5))
+print(rock_plt)
+
+soul_plt <- ggplot(soul, aes(x = yr_szn, y = n)) +
+  geom_bar(stat = "identity", fill='darkviolet') +
+  xlab("Time in Seasons (1958-2019)") + ylab("Number of Soul Hits") + 
+  ggtitle("Figure 10:Trends in Soul Since 1958") +
+  theme(axis.text.x = element_blank(), axis.ticks = element_blank(), plot.title = element_text(hjust = 0.5))
+print(soul_plt)
+
+```
+
+There does seem to be some sort of temporal trend based on the periodic peaks in number of hits, but the trends do not seem related to season. This becomes even more apparent in Figures 11, 12, and 13 when we look at the total number of hits by genre per season. There appears to be virtually no difference between number of hits between seasons. However, this could be due to the scalability of the graphs, so I decided to further investigate with a statistical test.
+
+```{r pop}
+pop2 <- hot_genre %>% filter(term=="pop") %>% select(season) %>% group_by(season) %>% summarise(Freq = n())
+rock2 <- hot_genre %>% filter(term=="rock") %>% select(season) %>% group_by(season) %>% summarise(Freq = n())
+soul2 <- hot_genre %>% filter(term=="soul") %>% select(season) %>% group_by(season) %>% summarise(Freq = n())
+
+pop_plt2 <- ggplot(pop2, aes(x = season, y = Freq)) +
+  geom_bar(stat = "identity", fill='pink') +
+  xlab("Season") + ylab("Number of Hits") + 
+  ggtitle("Figure 11: Quantity of Pop Hits By Season") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+rock_plt2 <- ggplot(rock2, aes(x = season, y = Freq)) +
+  geom_bar(stat = "identity", fill="deepskyblue4") +
+  xlab("Season") + ylab("Number of Hits") + 
+  ggtitle("Figure 12: Quantity of Rock Hits By Season") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+soul_plt2 <- ggplot(soul2, aes(x = season, y = Freq)) +
+  geom_bar(stat = "identity", fill='darkviolet') +
+  xlab("Season") + ylab("Number of Hits") + 
+  ggtitle("Figure 13: Quantity of Soul Hits By Season") + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+print(pop_plt2)
+print(rock_plt2)
+print(soul_plt2)
+```
+
+I ran one-way ANOVA tests on pop, rock, and soul subsets to determine if there is a difference in the observed mean of hits by season and the means expected under the null hypothesis   
+H0 = $\mu_{1}$ = $\mu_{2}$ = $\mu_{3}$=  $\mu_{4}$   
+and the alternative that at least one of the means is not equal.
+From the ANOVA tests we see that for pop, rock, and soul there appears to be no seasonal difference. Thus, based on both the plots shown in Figures 11, 12, and 13, and the supporting ANOVA tests, we conclude there to be no seasonal difference in the type of music people consume. The tests for pop, rock, and soul all result in p-values greater than 0.8. Thus, the initial hypothesis that there is a seasonal difference between when pop, rock, and soul are consumed is not supported.
+```{r anova}
+#Pop
+pop3 <- data.frame(hot_genre %>% filter(term=="pop") %>% select(year, season) %>% group_by(year, season) %>% summarise(Freq = n()))
+anovapop <- aov(Freq~season, data=pop3)
+print("Figure 14: Pop ANOVA Test")
+print(summary(anovapop))
+
+#Rock 
+rock3 <- data.frame(hot_genre %>% filter(term=="rock") %>% select(year, season) %>% group_by(year, season) %>% summarise(Freq = n()))
+anovarock <- aov(Freq~season, data=rock3)
+print("Figure 15: Rock ANOVA Test")
+print(summary(anovarock))
+
+#Soul
+soul3 <- data.frame(hot_genre %>% filter(term=="soul") %>% select(year, season) %>% group_by(year, season) %>% summarise(Freq = n()))
+anovasoul <- aov(Freq~season, data= soul3)
+print("Figure 16: Soul ANOVA Test")
+print(summary(anovasoul))
+
+```
+
+Lastly, I was curious to see if a seasonal effect is present particularly in "angsty music", which has a reputation for exploring sadness and depression. I defined "angsty music" to be genres that included the words "emo", "metal", "pop punk", or "grunge". Following the same procedure as before, I created Figures 17 and 18 of hits over time and hits by season. Again, there appeared to not be much of a difference except for a dip in summer. When I ran the one-way ANOVA test to determine statistical difference between the means of season, again we see that there is no difference between angsty music popularity by season, with a p-value of 0.886.
+```{r angsty}
+angst <- hot_genre %>% filter(grepl('emo|metal|pop punk|grunge', term)) %>% mutate(yr_szn = paste(season, year)) %>% group_by(yr_szn) %>% summarise(n = n())
+#plot 1
+angst_plt <- ggplot(angst, aes(x = yr_szn, y = n)) +
+  geom_bar(stat = "identity", fill='black') +
+  xlab("Time in Seasons (1958-2019)") + ylab("Number of Angsty Hits") + 
+  ggtitle("Figure 17: Trends in Angsty Music Since 1958") +
+  theme(axis.text.x = element_blank(), axis.ticks = element_blank()) + 
+  theme(plot.title = element_text(hjust = 0.5))
+print(angst_plt) #no seasonal trend
+
+angst2 <- hot_genre %>% filter(grepl('emo|metal|pop punk|grunge', term)) %>% select(season) %>% group_by(season) %>% summarise(Freq = n())
+
+angst_plt2 <- ggplot(angst2, aes(x = season, y = Freq)) +
+  geom_bar(stat = "identity", fill='black') +
+  xlab("Season") + ylab("Number of Hits") + 
+  ggtitle("Figure 18: Angsty Hits By Season") + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+print(angst_plt2)
+
+#Anova 
+angst3 <- data.frame(hot_genre %>% filter(grepl('emo|metal|pop punk|grunge', term)) %>% select(year, season) %>% group_by(year, season) %>% summarise(Freq = n()))
+anovaangst <- aov(Freq~season, data=angst3)
+print("Figure 16: Angst ANOVA Test")
+print(summary(anovaangst))
+
+```
+
+In summary, contrary to my hypothesis, the ANOVA tests and graphs imply that there does not seem to be a seasonal effect on genre of music. 
+
+## Conclusions, Final Remarks, and Future Directions 
+While the results of this analysis are not what I expected, I did learn something valuable from this study: you like what you like when it comes to music and you consume it consistently, no matter the season. It doesn't matter if it's summer or winter, if someone loves rock music, they’re going to listen to it consistently throughout the year. Although SAD does not play the role that I hypothesized it would in music listening habits, I find comfort in the fact that our favorite genres of music get us through all the seasons. And that's exactly how I survived my first Chicago winter. 
+
+This study answered many of my questions about how SAD affects music listening habits, but I would be interested in further exploring this topic in the following ways. 
+(1) Studying those actually diagnosed with SAD to determine the true effect of the disorder on music listening habits. 
+(2) Using musical elements (such as chord progression and lyrics), rather than genre, to assess seasonal trends. This could capture more nuanced behavior in how our musical taste changes with the seasons.
+
+## Code 
+Code for this project can be found on [github](https://github.com/meganhazlett/SAD_music).
+
+## References 
+Goetz, R. (2019, October 9). When is the Best Time of Year to Release an Album or EP? Retrieved April 8, 2020, from https://musicconsultant.com/music-career/when-is-the-best-time-of-year-to-release-an-album-or-ep/#.XoYPndNKiL8
+
+Mehta, V. (2017, November 1). When Seasons Change, So Do Musical Preferences, Says Science. Retrieved April 8, 2020, from https://www.psychologytoday.com/us/blog/head-games/201711/when-seasons-change-so-do-musical-preferences-says-science
+
+Miller, S. (2020, January 6). Billboard Hot weekly charts - dataset by kcmillersean. Retrieved April 8, 2020, from https://data.world/kcmillersean/billboard-hot-100-1958-2017
+
+Ellis, D. P. W., Lamere, P., & Whitman, B. (2011). Million Song Dataset. Retrieved April 8, 2020, from http://millionsongdataset.com/
+
+Psychology Today. (2019, February 7). Seasonal Affective Disorder. Retrieved April 8, 2020, from https://www.psychologytoday.com/us/conditions/seasonal-affective-disorder
+
+Stack Exchange. (2015). Is this an appropriate method to test for seasonal effects in suicide count data? Retrieved April 8, 2020, from https://stats.stackexchange.com/questions/144745/is-this-an-appropriate-method-to-test-for-seasonal-effects-in-suicide-count-data  
+
+Writers, F. (2020, February 12). TOP 20: Music Festivals in the USA 2020 - Festicket Magazine. Retrieved April 8, 2020, from https://www.festicket.com/magazine/discover/top-festivals-usa/
+
+\pagebreak
+# Appendix
+
+```{r getlabels}
+labs = knitr::all_labels()
+labs = labs[!labs %in% c("setup","getlabels", "allcode")]
+```
+
+```{r allcode,ref.label=labs,eval=FALSE,echo=TRUE}
+```
